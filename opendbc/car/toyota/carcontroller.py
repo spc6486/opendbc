@@ -68,6 +68,10 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
     self.standstill_req = False
     self.permit_braking = True
     self.steer_rate_counter = 0
+    # the frame without STEERING_LKA after a steer-rate cut (below) was measured only on the Lexus IS with the TSS2 EPS
+    # retrofit; every other EPS keeps the upstream stream until it is measured
+    self.steer_gap_after_cut = self.CP.carFingerprint == CAR.LEXUS_IS and bool(self.CP_SP.flags & ToyotaFlagsSP.TSS2_EPS)
+    self.steer_req_cut_sent = False
     self.distance_button = 0
 
     # *** start long control state ***
@@ -118,15 +122,23 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
           carlog.error("SecOC synchronization MAC mismatch, wrong key?")
 
     # *** steer torque ***
-    new_torque = int(round(actuators.torque * self.params.STEER_MAX))
-    apply_torque = apply_meas_steer_torque_limits(new_torque, self.last_torque, CS.out.steeringTorqueEps, self.params)
+    # With steer_gap_after_cut, the frame after a request cut sends no STEERING_LKA, so the EPS sees the cut for
+    # ~20 ms instead of having the next request frame replace it; a cut that pandad sends one cycle late still stands
+    # ~10 ms. That frame computes nothing: last_torque and the fault-avoidance count keep their values, so the panda
+    # sees the same frames minus one (17 request frames between cuts, a cut every 190 ms against its 162 ms minimum).
+    steer_gap = lat_active and self.steer_req_cut_sent
+    if steer_gap:
+      apply_torque, apply_steer_req = self.last_torque, True
+    else:
+      new_torque = int(round(actuators.torque * self.params.STEER_MAX))
+      apply_torque = apply_meas_steer_torque_limits(new_torque, self.last_torque, CS.out.steeringTorqueEps, self.params)
 
-    # >100 degree/sec steering fault prevention
-    self.steer_rate_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
-                                                                      self.steer_rate_counter, MAX_STEER_RATE_FRAMES)
+      # >100 degree/sec steering fault prevention
+      self.steer_rate_counter, apply_steer_req = common_fault_avoidance(abs(CS.out.steeringRateDeg) >= MAX_STEER_RATE, lat_active,
+                                                                        self.steer_rate_counter, MAX_STEER_RATE_FRAMES)
 
-    if not lat_active:
-      apply_torque = 0
+      if not lat_active:
+        apply_torque = 0
 
     # *** steer angle ***
     if self.CP.steerControlType == SteerControlType.angle:
@@ -143,20 +155,23 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
                                                        CC.latActive, self.params.ANGLE_LIMITS)
 
     self.last_torque = apply_torque
+    self.steer_req_cut_sent = (self.steer_gap_after_cut and lat_active and not apply_steer_req and not steer_gap and
+                               self.CP.steerControlType != SteerControlType.angle)
 
     # toyota can trace shows STEERING_LKA at 42Hz, with counter adding alternatively 1 and 2;
     # sending it at 100Hz seem to allow a higher rate limit, as the rate limit seems imposed
     # on consecutive messages
-    steer_command = toyotacan.create_steer_command(self.packer, apply_torque, apply_steer_req)
-    if self.CP.flags & ToyotaFlags.SECOC.value:
-      # TODO: check if this slow and needs to be done by the CANPacker
-      steer_command = add_mac(self.secoc_key,
-                              int(CS.secoc_synchronization['TRIP_CNT']),
-                              int(CS.secoc_synchronization['RESET_CNT']),
-                              self.secoc_lka_message_counter,
-                              steer_command)
-      self.secoc_lka_message_counter += 1
-    can_sends.append(steer_command)
+    if not steer_gap:
+      steer_command = toyotacan.create_steer_command(self.packer, apply_torque, apply_steer_req)
+      if self.CP.flags & ToyotaFlags.SECOC.value:
+        # TODO: check if this slow and needs to be done by the CANPacker
+        steer_command = add_mac(self.secoc_key,
+                                int(CS.secoc_synchronization['TRIP_CNT']),
+                                int(CS.secoc_synchronization['RESET_CNT']),
+                                self.secoc_lka_message_counter,
+                                steer_command)
+        self.secoc_lka_message_counter += 1
+      can_sends.append(steer_command)
 
     # STEERING_LTA does not seem to allow more rate by sending faster, and may wind up easier
     if self.frame % 2 == 0 and self.CP.flags & ToyotaFlags.TSS2:
