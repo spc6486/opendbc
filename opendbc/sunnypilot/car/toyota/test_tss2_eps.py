@@ -8,8 +8,8 @@ from opendbc.can.dbc import DBC as DBCFile
 from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.toyotacan import toyota_checksum
-from opendbc.car.toyota.values import CAR, DBC
-from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, TSS2_EPS_DBC
+from opendbc.car.toyota.values import CAR, DBC, EPS_SCALE
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, TSS2_EPS_DBC, TSS2_EPS_SCALE
 
 EPS_STATUS = 0x262
 
@@ -93,6 +93,28 @@ class TestTss2Eps(unittest.TestCase):
             cp.update([(i * 40_000_000, [(EPS_STATUS, eps_status(sent_length), 0)])])
           self.assertEqual(cp.vl["EPS_STATUS"]["LKA_STATE"], 5 if accepted else 0)
           self.assertEqual(len(cp.message_states[EPS_STATUS].timestamps) > 0, accepted)
+
+  def test_eps_scale(self):
+    # the retrofit EPS's torque scale reaches the panda (first byte of the safety param) and carstate together, on the
+    # platforms in TSS2_EPS_SCALE only; every other car keeps EPS_SCALE, and the safety param's flag bits are untouched
+    self.assertEqual(set(TSS2_EPS_SCALE), {CAR.LEXUS_IS})
+    for candidate in CAR:
+      for eps_length in (None, 5, 8):
+        for smart_dsu in (False, True):
+          with self.subTest(candidate=candidate.value, eps_length=eps_length, smart_dsu=smart_dsu):
+            CP, CP_SP = params(candidate, eps_length, smart_dsu)
+            retrofit = bool(CP_SP.flags & ToyotaFlagsSP.TSS2_EPS)
+            scale = TSS2_EPS_SCALE[candidate] if retrofit and candidate in TSS2_EPS_SCALE else EPS_SCALE[candidate]
+            param = CP.safetyConfigs[0].safetyParam
+            self.assertEqual(param & 0xFF, scale)
+            stock_CP, _ = params(candidate, 5 if retrofit else eps_length, smart_dsu)
+            self.assertEqual(param & ~0xFF, stock_CP.safetyConfigs[0].safetyParam & ~0xFF)
+            self.assertEqual(CarInterface(CP, CP_SP).CS.eps_torque_scale, scale / 100.)
+    self.assertEqual(params(CAR.LEXUS_IS, 8)[0].safetyConfigs[0].safetyParam & 0xFF, 100)
+    self.assertEqual(params(CAR.LEXUS_IS, 5)[0].safetyConfigs[0].safetyParam & 0xFF, EPS_SCALE[CAR.LEXUS_IS])
+    # a retrofit detected on another platform of the same DBC keeps that platform's EPS_SCALE
+    other = next(c for c in CAR if c != CAR.LEXUS_IS and bool(params(c, 8)[1].flags & ToyotaFlagsSP.TSS2_EPS))
+    self.assertEqual(params(other, 8)[0].safetyConfigs[0].safetyParam & 0xFF, EPS_SCALE[other])
 
 
 if __name__ == "__main__":

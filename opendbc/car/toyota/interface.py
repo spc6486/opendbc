@@ -6,7 +6,7 @@ from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerP
                                                   MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ToyotaSafetyFlags, UNSUPPORTED_DSU_CAR
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.interfaces import CarInterfaceBase
-from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP, TSS2_EPS_DBC
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP, TSS2_EPS_DBC, TSS2_EPS_SCALE
 
 SteerControlType = structs.CarParams.SteerControlType
 
@@ -148,6 +148,9 @@ class CarInterface(CarInterfaceBase):
     # definition rejects (CAN error). carstate then parses the 8-byte definition; cars with the stock EPS are unchanged.
     if fingerprint[0].get(0x262) == 8 and DBC[candidate][Bus.pt] in TSS2_EPS_DBC:
       ret.flags |= ToyotaFlagsSP.TSS2_EPS.value
+      # its torque report has its own scale where measured: the first byte of the safety param
+      if candidate in TSS2_EPS_SCALE:
+        stock_cp.safetyConfigs[0].safetyParam = (stock_cp.safetyConfigs[0].safetyParam & ~0xFF) | TSS2_EPS_SCALE[candidate]
 
     # Enhanced BSM: on the 2017-20 Lexus IS the blind spot monitor sensors do not broadcast detections (0x3F6 carries
     # only the enabled flags); openpilot polls them instead (sunnypilot/car/toyota/bsm.py). Enabled when the left sensor

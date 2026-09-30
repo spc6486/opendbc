@@ -11,7 +11,7 @@ from opendbc.sunnypilot.car.toyota.bsm import BSM_DIAG_MSG, BsmCarState
 from opendbc.sunnypilot.car.toyota.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.toyota.mads import MadsCarState
 from opendbc.sunnypilot.car.toyota.rsa import NAV_MSG, RsaCarState
-from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, TSS2_EPS_DBC
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, TSS2_EPS_DBC, TSS2_EPS_SCALE
 
 ButtonType = structs.CarState.ButtonEvent.Type
 SteerControlType = structs.CarParams.SteerControlType
@@ -36,7 +36,8 @@ class CarState(CarStateBase, MadsCarState, RsaCarState, BsmCarState, CarStateExt
     BsmCarState.__init__(self, CP, CP_SP)
     CarStateExt.__init__(self, CP, CP_SP)
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
-    self.eps_torque_scale = EPS_SCALE[CP.carFingerprint] / 100.
+    retrofit_scale = TSS2_EPS_SCALE.get(CP.carFingerprint) if CP_SP.flags & ToyotaFlagsSP.TSS2_EPS else None
+    self.eps_torque_scale = (retrofit_scale or EPS_SCALE[CP.carFingerprint]) / 100.
     self.cluster_speed_hyst_gap = CV.KPH_TO_MS / 2.
     self.cluster_min_speed = CV.KPH_TO_MS / 2.
 

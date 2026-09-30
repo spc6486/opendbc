@@ -24,6 +24,13 @@ TSS2_EPS_DBC = {
   "toyota_tnga_k_pt_generated": "toyota_tnga_k_tss2_eps_pt_generated",
 }
 
+# EPS_SCALE (STEER_TORQUE_EPS to command units, in %) for that TSS2 power-steering ECU, on the platforms where it was
+# measured; others keep EPS_SCALE. interface.py writes it into the panda safety param and carstate.py scales
+# steeringTorqueEps with it, so the controller and the panda use one value. On a 2017 Lexus IS the retrofit EPS reports
+# about 0.80 x the command in steady hands-off steering (a unit-matched scale near 125); 100 stays below that, so the
+# measured-torque limit stays tighter than unit-matched. Keyed by platform name (CAR is a str enum).
+TSS2_EPS_SCALE = {"LEXUS_IS": 100}
+
 
 class ToyotaSafetyFlagsSP:
   DEFAULT = 0
