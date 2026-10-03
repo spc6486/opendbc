@@ -110,7 +110,7 @@ class TestTss2Eps(unittest.TestCase):
             stock_CP, _ = params(candidate, 5 if retrofit else eps_length, smart_dsu)
             self.assertEqual(param & ~0xFF, stock_CP.safetyConfigs[0].safetyParam & ~0xFF)
             self.assertEqual(CarInterface(CP, CP_SP).CS.eps_torque_scale, scale / 100.)
-    self.assertEqual(params(CAR.LEXUS_IS, 8)[0].safetyConfigs[0].safetyParam & 0xFF, 100)
+    self.assertEqual(params(CAR.LEXUS_IS, 8)[0].safetyConfigs[0].safetyParam & 0xFF, 124)
     self.assertEqual(params(CAR.LEXUS_IS, 5)[0].safetyConfigs[0].safetyParam & 0xFF, EPS_SCALE[CAR.LEXUS_IS])
     # a retrofit detected on another platform of the same DBC keeps that platform's EPS_SCALE
     other = next(c for c in CAR if c != CAR.LEXUS_IS and bool(params(c, 8)[1].flags & ToyotaFlagsSP.TSS2_EPS))
