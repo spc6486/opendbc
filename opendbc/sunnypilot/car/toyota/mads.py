@@ -10,6 +10,7 @@ from collections import namedtuple
 
 from opendbc.car import Bus, structs
 from opendbc.car.toyota.values import ToyotaFlags
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 from opendbc.sunnypilot.mads_base import MadsCarStateBase
 from opendbc.can.parser import CANParser
 
@@ -67,7 +68,7 @@ class MadsCarController:
 class MadsCarState(MadsCarStateBase):
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
     super().__init__(CP, CP_SP)
-    self.lkas_status_mads = bool(CP.flags & ToyotaFlags.UNSUPPORTED_DSU)
+    self.lkas_status_mads = bool(CP.flags & ToyotaFlags.UNSUPPORTED_DSU) and bool(CP_SP.flags & ToyotaFlagsSP.LDA_MADS)
 
     self.lda_on = False               # accepted LDA level
     self.lda_on_init = False          # first valid camera frame seeds lda_on without generating a press

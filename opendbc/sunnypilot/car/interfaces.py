@@ -20,7 +20,7 @@ from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import LongitudinalTuni
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
 from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafetyFlagsSP
 from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP, TeslaSafetyFlagsSP
-from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP
 
 
 class LatControlInputs(NamedTuple):
@@ -166,3 +166,14 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
 
     if toyota_stop_and_go_hack and CP.openpilotLongitudinalControl:
       CP_SP.flags |= ToyotaFlagsSP.STOP_AND_GO_HACK.value
+
+    # Lexus IS features (on by default where detected); a setting of 0 turns one off before the car interface and the
+    # panda safety config are built from these params
+    if int(params_dict.get("LexusIsRsa", 1)) == 0:
+      CP_SP.flags &= ~ToyotaFlagsSP.RSA.value
+    if int(params_dict.get("LexusIsLdaMads", 1)) == 0:
+      CP_SP.flags &= ~ToyotaFlagsSP.LDA_MADS.value
+    if int(params_dict.get("LexusIsEnhancedBsm", 1)) == 0 and CP_SP.flags & ToyotaFlagsSP.ENHANCED_BSM:
+      CP_SP.flags &= ~ToyotaFlagsSP.ENHANCED_BSM.value
+      CP_SP.safetyParam &= ~ToyotaSafetyFlagsSP.ENHANCED_BSM
+      CP.enableBsm = False  # Enhanced BSM is set only on the Lexus IS, which has no other BSM source (not TSS2)

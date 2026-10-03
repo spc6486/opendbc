@@ -9,6 +9,7 @@ from enum import StrEnum
 
 from opendbc.car import Bus, CanData, DT_CTRL, structs
 from opendbc.car.toyota.values import ToyotaFlags
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 from opendbc.can.parser import CANParser
 
 # Road-sign display (RSA) from the navigation speed limit, on the UNSUPPORTED_DSU cars (Lexus IS 2017-19, RC 2018-20,
@@ -69,7 +70,7 @@ def rsa_frames(limit_mph: int | None, syncid: int) -> list[CanData]:
 
 class RsaCarState:
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
-    self.rsa_nav = bool(CP.flags & ToyotaFlags.UNSUPPORTED_DSU)
+    self.rsa_nav = bool(CP.flags & ToyotaFlags.UNSUPPORTED_DSU) and bool(CP_SP.flags & ToyotaFlagsSP.RSA)
     self.nav_speed_limit: int | None = None   # accepted head-unit limit in mph, None = no limit
     self.rsa_limit: int | None = None         # limit on the sign: nav_speed_limit, with "no limit" held 3 s
     self.nav_ts = 0
@@ -130,7 +131,8 @@ class RsaCarState:
 class RsaCarController:
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
     # the panda allows RSA1/RSA2 only with openpilot longitudinal on UNSUPPORTED_DSU cars without a gas interceptor
-    self.rsa_tx = bool(CP.flags & ToyotaFlags.UNSUPPORTED_DSU) and CP.openpilotLongitudinalControl and \
+    self.rsa_tx = bool(CP.flags & ToyotaFlags.UNSUPPORTED_DSU) and bool(CP_SP.flags & ToyotaFlagsSP.RSA) and \
+                  CP.openpilotLongitudinalControl and \
                   not (CP.flags & ToyotaFlags.SECOC) and not CP_SP.enableGasInterceptor
     self.rsa_syncid = 0
     self.rsa_sent = False

@@ -20,12 +20,14 @@ FACTORY_RSA1 = {50: "24003200002000", 55: "24003700002000", 65: "24004100002000"
 FACTORY_RSA2 = {True: "00000000002008", False: "00000000000000"}
 
 
-def car_params(flags=ToyotaFlags.UNSUPPORTED_DSU, op_long=True, interceptor=False):
+def car_params(flags=ToyotaFlags.UNSUPPORTED_DSU, op_long=True, interceptor=False, rsa=True):
   CP = structs.CarParams()
   CP.flags = int(flags)
   CP.openpilotLongitudinalControl = op_long
   CP_SP = structs.CarParamsSP()
   CP_SP.enableGasInterceptor = interceptor
+  if rsa:
+    CP_SP.flags = int(ToyotaFlagsSP.RSA)  # get_params_sp sets it on UNSUPPORTED_DSU cars; the setting can clear it
   return CP, CP_SP
 
 

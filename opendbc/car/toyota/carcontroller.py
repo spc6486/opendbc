@@ -100,7 +100,7 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
 
     # sunnypilot: MADS-driven cluster LKA indicator, limited to the cars the LDA-button MADS toggle is scoped to
     MadsCarController.update(self, CC, CC_SP)
-    lkas_status = self.lkas_status() if self.CP.flags & ToyotaFlags.UNSUPPORTED_DSU else None
+    lkas_status = self.lkas_status() if self.CP_SP.flags & ToyotaFlagsSP.LDA_MADS else None
 
     if len(CC.orientationNED) == 3:
       self.pitch.update(CC.orientationNED[1])
