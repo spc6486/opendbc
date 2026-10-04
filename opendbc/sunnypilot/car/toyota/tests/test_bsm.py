@@ -9,22 +9,26 @@ from opendbc.car.structs import CarParams
 from opendbc.car.toyota.values import CAR, DBC, FW_QUERY_CONFIG, Ecu
 from opendbc.safety.tests.libsafety import libsafety_py
 from opendbc.sunnypilot.car.toyota.bsm import BSM_CLOSE_SPEED, BSM_DIAG_MSG, BSM_LEFT, BSM_OPEN_SPEED, BSM_POLL_PERIOD, \
-                                             BSM_RIGHT, BSM_SESSION_RETRY_FRAMES, BSM_START_FRAME, BSM_TIMEOUT_FRAMES, \
-                                             BsmCarController, BsmCarState, bsm_detected
+                                             BSM_RIGHT, BSM_START_FRAME, BSM_TIMEOUT_FRAMES, BsmCarController, \
+                                             BsmCarState, bsm_detected
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP, TSS2_EPS_DBC
 
 PT_DBC = DBC[CAR.LEXUS_IS][Bus.pt]
 REPLY_ADDR = 0x758
 
-# the six requests the panda allows (safety/modes/toyota.h)
-SESSION = {BSM_LEFT: bytes.fromhex("4102106000000000"), BSM_RIGHT: bytes.fromhex("4202106000000000")}
+# the only requests sent: read local identifier 0x69, default session (the panda allows these and four more)
 POLL = {BSM_LEFT: bytes.fromhex("4102216900000000"), BSM_RIGHT: bytes.fromhex("4202216900000000")}
+SESSION = {BSM_LEFT: bytes.fromhex("4102106000000000"), BSM_RIGHT: bytes.fromhex("4202106000000000")}
 CLOSE = {BSM_LEFT: bytes.fromhex("4102100100000000"), BSM_RIGHT: bytes.fromhex("4202100100000000")}
 DRIVING = 30 * CV.MPH_TO_MS
+# d4 values logged on route 365 (left master: 0x04 off, 0x84 lamp on; right slave: 0x00 off, 0x20 lamp on, 0x10 flashing)
+L_OFF, L_ON, L_FLASH = 0x04, 0x84, 0x44
+R_OFF, R_ON, R_FLASH = 0x00, 0x20, 0x10
 
 
-def reply(sensor: int, data_5: int, data_6: int, pci: int = 6, sid: int = 0x61, local_id: int = 0x69) -> CanData:
-  return CanData(REPLY_ADDR, bytes([sensor, pci, sid, local_id, 0, data_5, data_6, 0]), 0)
+def reply(sensor: int, data_4: int, data_5: int = 0, data_6: int = 0, pci: int = 6, sid: int = 0x61,
+          local_id: int = 0x69) -> CanData:
+  return CanData(REPLY_ADDR, bytes([sensor, pci, sid, local_id, data_4, data_5, data_6, 0]), 0)
 
 
 def bsm_cp(enhanced=True):
@@ -62,46 +66,74 @@ class BsmStateHarness:
 
 class TestBsmState(unittest.TestCase):
   def test_rule(self):
-    self.assertFalse(bsm_detected(10, 10))
-    self.assertTrue(bsm_detected(11, 0))
-    self.assertTrue(bsm_detected(0, 11))
+    # the lamp command bits only; the master's main-switch bit (0x04) and the lamp voltage/current bytes do not count
+    self.assertFalse(bsm_detected(BSM_LEFT, L_OFF))
+    self.assertTrue(bsm_detected(BSM_LEFT, L_ON))
+    self.assertTrue(bsm_detected(BSM_LEFT, L_FLASH))
+    self.assertFalse(bsm_detected(BSM_LEFT, R_ON | R_FLASH))   # the slave's bit positions mean nothing on the master
+    self.assertFalse(bsm_detected(BSM_RIGHT, R_OFF))
+    self.assertTrue(bsm_detected(BSM_RIGHT, R_ON))
+    self.assertTrue(bsm_detected(BSM_RIGHT, R_FLASH))
+    self.assertFalse(bsm_detected(BSM_RIGHT, 0xC0 | 0x08 | 0x04))
 
   def test_both_sides(self):
     h = BsmStateHarness()
-    ret = h.step([reply(BSM_LEFT, 30, 0), reply(BSM_RIGHT, 0, 0)])
+    ret = h.step([reply(BSM_LEFT, L_ON, 32, 13), reply(BSM_RIGHT, R_OFF)])
     self.assertEqual((ret.leftBlindspot, ret.rightBlindspot), (True, False))
-    ret = h.step([reply(BSM_RIGHT, 0, 12)])
+    ret = h.step([reply(BSM_RIGHT, R_FLASH)])
     self.assertEqual((ret.leftBlindspot, ret.rightBlindspot), (True, True))
-    ret = h.step([reply(BSM_LEFT, 10, 10)])
+    ret = h.step([reply(BSM_LEFT, L_OFF, 32, 13)])   # lamp circuit still decaying: not occupied
     self.assertEqual((ret.leftBlindspot, ret.rightBlindspot), (False, True))
 
   def test_ignored_frames(self):
-    for frame in (reply(BSM_LEFT, 30, 30, sid=0x7F),         # negative response
-                  reply(BSM_LEFT, 30, 30, sid=0x50),         # reply to the session request
-                  reply(BSM_LEFT, 30, 30, local_id=0x68),    # another local identifier
-                  reply(0x0F, 30, 30),                        # another ECU (the radar's sub-address)
-                  reply(BSM_LEFT, 30, 30, pci=0x10),         # first frame of a multi-frame reply
-                  reply(BSM_LEFT, 30, 30, pci=4)):            # too short to carry bytes 5 and 6
+    for frame in (reply(BSM_LEFT, L_ON, sid=0x7F),         # negative response
+                  reply(BSM_LEFT, L_ON, sid=0x50),         # a session reply
+                  reply(BSM_LEFT, L_ON, local_id=0x68),    # another local identifier
+                  reply(0x0F, L_ON),                        # another ECU (the radar's sub-address)
+                  reply(BSM_LEFT, L_ON, pci=0x10),         # first frame of a multi-frame reply
+                  reply(BSM_LEFT, L_ON, pci=2)):            # too short to carry d4
       h = BsmStateHarness()
       ret = h.step([frame])
       self.assertFalse(ret.leftBlindspot or ret.rightBlindspot, frame.dat.hex())
       self.assertIsNone(h.cs.bsm_reply_frame[BSM_LEFT])
 
-  def test_timeout(self):
+  def test_short_master_reply(self):
+    # the master's reply as Techstream read it parked in the default session: 61 69 04 01 00 00
     h = BsmStateHarness()
-    self.assertTrue(h.step([reply(BSM_LEFT, 30, 30)]).leftBlindspot)
+    h.step([CanData(REPLY_ADDR, bytes.fromhex("410661690401000000")[:8], 0)])
+    self.assertIsNotNone(h.cs.bsm_reply_frame[BSM_LEFT])
+    self.assertFalse(h.cs.bsm_detected[BSM_LEFT])
+
+  def test_silent_sensor_reads_occupied(self):
+    h = BsmStateHarness()
+    for _ in range(BSM_TIMEOUT_FRAMES + BSM_POLL_PERIOD):
+      ret = h.step([reply(BSM_RIGHT, R_OFF)])
+      self.assertFalse(ret.leftBlindspot)                # within the first second of polling: not yet
+    ret = h.step([reply(BSM_RIGHT, R_OFF)])
+    self.assertEqual((ret.leftBlindspot, ret.rightBlindspot), (True, False))
+    self.assertFalse(h.step([reply(BSM_LEFT, L_OFF)]).leftBlindspot)   # answers again: clear
+
+  def test_timeout_while_detected(self):
+    h = BsmStateHarness()
+    for _ in range(3 * BSM_TIMEOUT_FRAMES):
+      h.step([reply(BSM_LEFT, L_OFF)])
+    self.assertTrue(h.step([reply(BSM_LEFT, L_ON)]).leftBlindspot)
     for _ in range(BSM_TIMEOUT_FRAMES - 1):
       self.assertTrue(h.step().leftBlindspot)
-    self.assertFalse(h.step().leftBlindspot)
-    # no re-arming from the last frame the parser holds (the staging-c3 implementation kept a silent side detected)
     for _ in range(5 * BSM_TIMEOUT_FRAMES):
-      self.assertFalse(h.step().leftBlindspot)
-    self.assertTrue(h.step([reply(BSM_LEFT, 30, 30)]).leftBlindspot)
+      self.assertTrue(h.step().leftBlindspot)          # still silent: occupied, not clear
+    self.assertFalse(h.step([reply(BSM_LEFT, L_OFF)]).leftBlindspot)
 
   def test_speed(self):
     h = BsmStateHarness()
-    self.assertFalse(h.step([reply(BSM_LEFT, 30, 30)], v_ego=BSM_CLOSE_SPEED - 0.01).leftBlindspot)
-    self.assertTrue(h.step(v_ego=BSM_CLOSE_SPEED + 0.01).leftBlindspot)
+    self.assertFalse(h.step([reply(BSM_LEFT, L_ON)], v_ego=BSM_OPEN_SPEED - 0.01).leftBlindspot)   # gate not open
+    self.assertTrue(h.step(v_ego=BSM_OPEN_SPEED + 0.01).leftBlindspot)
+    self.assertTrue(h.step(v_ego=BSM_CLOSE_SPEED + 0.01).leftBlindspot)                              # hysteresis
+    self.assertFalse(h.step(v_ego=BSM_CLOSE_SPEED - 0.01).leftBlindspot)
+    # below the gate nothing is reported, silent or not
+    for _ in range(5 * BSM_TIMEOUT_FRAMES):
+      ret = h.step(v_ego=0.)
+      self.assertFalse(ret.leftBlindspot or ret.rightBlindspot)
 
   def test_not_enhanced(self):
     cs = BsmCarState(*bsm_cp(enhanced=False))
@@ -112,38 +144,27 @@ class TestBsmState(unittest.TestCase):
   def test_both_eps_dbcs(self):
     for dbc in (PT_DBC, TSS2_EPS_DBC[PT_DBC]):
       h = BsmStateHarness(dbc)
-      self.assertTrue(h.step([reply(BSM_RIGHT, 0, 40)]).rightBlindspot, dbc)
+      self.assertTrue(h.step([reply(BSM_RIGHT, R_ON)]).rightBlindspot, dbc)
 
 
 class TestBsmController(unittest.TestCase):
-  def run_frames(self, frames, fresh=lambda frame, sensor: False, speed=lambda frame: DRIVING):
+  def run_frames(self, frames, speed=lambda frame: DRIVING):
     cc = BsmCarController(*bsm_cp())
     sends = {}
     for frame in range(frames):
-      CS = SimpleNamespace(out=SimpleNamespace(vEgo=speed(frame)), bsm_fresh=lambda sensor, f=frame: fresh(f, sensor))
+      CS = SimpleNamespace(out=SimpleNamespace(vEgo=speed(frame)))
       msgs = cc.create_bsm_msgs(CS, frame)
       if msgs:
         sends[frame] = [(m.address, m.dat, m.src) for m in msgs]
     return sends
 
   def test_schedule(self):
-    sends = self.run_frames(BSM_START_FRAME + 5 * BSM_POLL_PERIOD, fresh=lambda frame, sensor: True)
+    sends = self.run_frames(BSM_START_FRAME + 5 * BSM_POLL_PERIOD)
     self.assertNotIn(BSM_START_FRAME - 1, sends)
-    self.assertEqual(sends[BSM_START_FRAME], [(0x750, SESSION[BSM_LEFT], 0)])
-    self.assertEqual(sends[BSM_START_FRAME + 10], [(0x750, SESSION[BSM_RIGHT], 0)])
-    for k in range(1, 5):
+    for k in range(5):
       self.assertEqual(sends[BSM_START_FRAME + k * BSM_POLL_PERIOD], [(0x750, POLL[BSM_LEFT], 0)])
       self.assertEqual(sends[BSM_START_FRAME + k * BSM_POLL_PERIOD + 10], [(0x750, POLL[BSM_RIGHT], 0)])
-    self.assertEqual(len(sends), 10)   # one request per sensor per poll period
-
-  def test_session_retry(self):
-    # the left sensor never answers, the right one does: only the left session request repeats, every 2 s
-    sends = self.run_frames(BSM_START_FRAME + 3 * BSM_SESSION_RETRY_FRAMES + 1,
-                            fresh=lambda frame, sensor: sensor == BSM_RIGHT)
-    left_sessions = [f for f, m in sends.items() if (0x750, SESSION[BSM_LEFT], 0) in m]
-    right_sessions = [f for f, m in sends.items() if (0x750, SESSION[BSM_RIGHT], 0) in m]
-    self.assertEqual(left_sessions, [BSM_START_FRAME + k * BSM_SESSION_RETRY_FRAMES for k in range(4)])
-    self.assertEqual(right_sessions, [BSM_START_FRAME + 10])
+    self.assertEqual(len(sends), 10)   # one request per sensor per poll period, no session requests
 
   def test_speed_gate(self):
     # parked, then 10 mph from 4 s, slowing through the hysteresis band from 8 s, below 8 mph from 12 s, 10 mph from 16 s
@@ -159,14 +180,11 @@ class TestBsmController(unittest.TestCase):
         return BSM_CLOSE_SPEED - 0.01
       return BSM_OPEN_SPEED
 
-    sends = self.run_frames(round(20 / DT_CTRL), fresh=lambda frame, sensor: True, speed=speed)
-    events = [(f, dat) for f, msgs in sends.items() for _, dat, _ in msgs if dat not in POLL.values()]
-    self.assertEqual(events, [(400, SESSION[BSM_LEFT]), (410, SESSION[BSM_RIGHT]),     # opened at 10 mph
-                              (1200, CLOSE[BSM_LEFT]), (1210, CLOSE[BSM_RIGHT]),       # closed below 8 mph, not at 9
-                              (1600, SESSION[BSM_LEFT]), (1610, SESSION[BSM_RIGHT])])  # and opened again
-    polls = sorted(f for f, msgs in sends.items() for _, dat, _ in msgs if dat in POLL.values())
-    self.assertTrue(all(400 < f < 1200 or f > 1610 for f in polls))
-    self.assertEqual(len([f for f in polls if 400 < f < 1200]), 2 * (800 // BSM_POLL_PERIOD) - 2)
+    sends = self.run_frames(round(20 / DT_CTRL), speed=speed)
+    self.assertTrue(all(dat in POLL.values() for msgs in sends.values() for _, dat, _ in msgs))
+    polls = sorted(sends)
+    self.assertTrue(all(400 <= f < 1200 or f >= 1600 for f in polls))
+    self.assertEqual(len([f for f in polls if 400 <= f < 1200]), 2 * (800 // BSM_POLL_PERIOD))
 
   def test_never_fast_enough(self):
     self.assertEqual(self.run_frames(round(30 / DT_CTRL), speed=lambda frame: BSM_OPEN_SPEED - 0.01), {})
@@ -175,13 +193,14 @@ class TestBsmController(unittest.TestCase):
     cc = BsmCarController(*bsm_cp(enhanced=False))
     self.assertFalse(any(cc.create_bsm_msgs(None, f) for f in range(3 * BSM_START_FRAME)))
 
-  def test_panda_allows_exactly_these(self):
-    # every request passes the panda with the flags interface.py sets, none without them
+  def test_panda_allows_these(self):
+    # every request passes the panda with the flags interface.py sets, none without them; the session requests the
+    # panda still allows are never sent
     def speed(frame):
       return DRIVING if (frame // 1000) % 2 == 0 else 0.
 
     requests = {dat for msgs in self.run_frames(round(40 / DT_CTRL), speed=speed).values() for _, dat, _ in msgs}
-    self.assertEqual(requests, set(SESSION.values()) | set(POLL.values()) | set(CLOSE.values()))
+    self.assertEqual(requests, set(POLL.values()))
     safety = libsafety_py.libsafety
     for sp, allowed in ((ToyotaSafetyFlagsSP.UNSUPPORTED_DSU | ToyotaSafetyFlagsSP.ENHANCED_BSM, True),
                         (ToyotaSafetyFlagsSP.UNSUPPORTED_DSU, False)):
@@ -190,7 +209,7 @@ class TestBsmController(unittest.TestCase):
         param = 77 | (2 << 8 if stock_long else 0)   # Lexus IS EPS factor, TOYOTA_PARAM_STOCK_LONGITUDINAL
         safety.set_safety_hooks(CarParams.SafetyModel.toyota, param)
         safety.init_tests()
-        for dat in requests:
+        for dat in requests | set(SESSION.values()) | set(CLOSE.values()):
           self.assertEqual(allowed, safety.safety_tx_hook(libsafety_py.make_CANPacket(0x750, 0, dat)), (sp, stock_long, dat.hex()))
 
 
@@ -229,7 +248,7 @@ class TestBsmInterface(unittest.TestCase):
             self.assertEqual(ci.CP.enableBsm, expected)
           self.assertEqual(REPLY_ADDR in ci.can_parsers[Bus.pt].addresses, expected)
 
-  def run_frames(self, ci, frames, left=0, speed_kph=50.):
+  def run_frames(self, ci, frames, left=L_OFF, right=R_OFF, speed_kph=50.):
     CC = structs.CarControl().as_reader()
     CC_SP = structs.CarControlSP()
     packer = CANPacker(ci.can_parsers[Bus.pt].dbc_name)
@@ -239,7 +258,9 @@ class TestBsmInterface(unittest.TestCase):
       nanos = round((i + 1) * DT_CTRL * 1e9)
       cans = [CanData(*packer.make_can_msg("WHEEL_SPEEDS", 0, wheels))]
       if i >= BSM_START_FRAME and i % BSM_POLL_PERIOD == 1:
-        cans.append(reply(BSM_LEFT, left, 0))
+        cans.append(reply(BSM_LEFT, left))
+      if right is not None and i >= BSM_START_FRAME and i % BSM_POLL_PERIOD == BSM_POLL_PERIOD // 2 + 1:
+        cans.append(reply(BSM_RIGHT, right))
       states.append(ci.update([(nanos, cans)])[0])
       sends.append([CanData(*m) for m in ci.apply(CC, CC_SP, nanos)[1]])
     return sends, states
@@ -251,24 +272,28 @@ class TestBsmInterface(unittest.TestCase):
           ci = self.interface([cornerRadar_fw(0x41)], smart_dsu=smart_dsu, eps_len=eps_len)
           self.assertEqual(ci.CP.openpilotLongitudinalControl, smart_dsu)
           self.assertTrue(ci.can_parsers[Bus.pt].message_states[REPLY_ADDR].ignore_alive)   # no CAN error without replies
-          sends, states = self.run_frames(ci, BSM_START_FRAME + 60, left=40)
+          sends, states = self.run_frames(ci, BSM_START_FRAME + 60, left=L_ON)
           self.assertGreater(states[-1].vEgo, BSM_OPEN_SPEED)
           bsm = [(i, m.dat) for i, s in enumerate(sends) for m in s if m.address == 0x750]
-          self.assertEqual(bsm[:3], [(BSM_START_FRAME, SESSION[BSM_LEFT]), (BSM_START_FRAME + 10, SESSION[BSM_RIGHT]),
+          self.assertEqual(bsm[:3], [(BSM_START_FRAME, POLL[BSM_LEFT]), (BSM_START_FRAME + 10, POLL[BSM_RIGHT]),
                                      (BSM_START_FRAME + 20, POLL[BSM_LEFT])])
           self.assertTrue(states[-1].leftBlindspot)
           self.assertFalse(states[-1].rightBlindspot)
+          # a right sensor that never answers reads occupied once polling has run for more than a second
+          sends, states = self.run_frames(ci, BSM_START_FRAME + 2 * BSM_TIMEOUT_FRAMES, left=L_OFF, right=None)
+          self.assertFalse(states[-1].leftBlindspot)
+          self.assertTrue(states[-1].rightBlindspot)
           self.assertTrue(all(m.src == 0 for s in sends for m in s if m.address == 0x750))
 
   def test_parked(self):
     ci = self.interface([cornerRadar_fw(0x41)])
-    sends, states = self.run_frames(ci, BSM_START_FRAME + 200, left=40, speed_kph=0.)
+    sends, states = self.run_frames(ci, BSM_START_FRAME + 200, left=L_ON, speed_kph=0.)
     self.assertFalse(any(m.address == 0x750 for s in sends for m in s))
     self.assertFalse(any(s.leftBlindspot for s in states))   # below the closing speed a reply (another tester's) is not reported
 
   def test_without_sensor(self):
     ci = self.interface([])
-    sends, states = self.run_frames(ci, BSM_START_FRAME + 60, left=40)
+    sends, states = self.run_frames(ci, BSM_START_FRAME + 60, left=L_ON)
     self.assertFalse(any(m.address == 0x750 for s in sends for m in s))
     self.assertFalse(any(s.leftBlindspot for s in states))
 
