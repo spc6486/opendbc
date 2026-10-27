@@ -248,6 +248,12 @@ class CarState(CarStateBase, MadsCarState, RsaCarState, BsmCarState, CarStateExt
       pt_messages.append((NAV_MSG, float('nan')))  # head unit, absent without navigation: no timeout check
     if CP_SP.flags & ToyotaFlagsSP.ENHANCED_BSM:
       pt_messages.append((BSM_DIAG_MSG, float('nan')))  # replies to openpilot's polls only: no timeout check
+    if CP_SP.flags & ToyotaFlagsSP.GEAR_PACKET_1HZ and not CP.flags & ToyotaFlags.SECOC:
+      # Lexus IS branch (gear_packet_rate): the transmission sends GEAR_PACKET about once a second, with ~8 Hz bursts while
+      # a value in it changes. Left undeclared, the parser learns its rate from its first frames once per drive; learned
+      # from a burst (route 937: ~11.7 Hz, 0.86 s timeout) the message times out before every 1 Hz frame and canValid
+      # drops (canError) about once a second for the whole drive. 1 Hz as declared upstream until opendbc 848c679a.
+      pt_messages.append(("GEAR_PACKET", 1))
 
     cam_messages = [
       ("RSA1", 0),

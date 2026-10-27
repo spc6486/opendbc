@@ -177,3 +177,5 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
       CP_SP.flags &= ~ToyotaFlagsSP.ENHANCED_BSM.value
       CP_SP.safetyParam &= ~ToyotaSafetyFlagsSP.ENHANCED_BSM
       CP.enableBsm = False  # Enhanced BSM is set only on the Lexus IS, which has no other BSM source (not TSS2)
+    if int(params_dict.get("LexusIsGearPacketRate", 1)) == 0:
+      CP_SP.flags &= ~ToyotaFlagsSP.GEAR_PACKET_1HZ.value

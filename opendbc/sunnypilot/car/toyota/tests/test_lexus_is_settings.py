@@ -8,7 +8,7 @@ from opendbc.sunnypilot.car.interfaces import setup_interfaces
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP
 
 FEATURES = {"LexusIsRsa": ToyotaFlagsSP.RSA, "LexusIsLdaMads": ToyotaFlagsSP.LDA_MADS,
-            "LexusIsEnhancedBsm": ToyotaFlagsSP.ENHANCED_BSM}
+            "LexusIsEnhancedBsm": ToyotaFlagsSP.ENHANCED_BSM, "LexusIsGearPacketRate": ToyotaFlagsSP.GEAR_PACKET_1HZ}
 
 
 def bsm_sensor_fw() -> CarParams.CarFw:

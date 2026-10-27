@@ -18,6 +18,7 @@ class ToyotaFlagsSP(IntFlag):
   ENHANCED_BSM = 64
   RSA = 128       # road-sign display from the navigation speed limit (rsa.py); set on UNSUPPORTED_DSU cars
   LDA_MADS = 256  # LDA button pauses/resumes MADS, cluster LKA indicator follows MADS (mads.py); set on UNSUPPORTED_DSU cars
+  GEAR_PACKET_1HZ = 512  # carstate declares GEAR_PACKET at 1 Hz instead of learning its rate; set on UNSUPPORTED_DSU cars
 
 
 # DBCs that define the stock 5-byte EPS_STATUS, mapped to the variant with the 8-byte EPS_STATUS a TSS2 power-steering
