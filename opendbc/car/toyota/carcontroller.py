@@ -13,6 +13,7 @@ from opendbc.car.toyota.values import CAR, NO_STOP_TIMER_CAR, TSS2_CAR, \
 from opendbc.can import CANPacker
 
 from opendbc.sunnypilot.car.toyota.bsm import BsmCarController
+from opendbc.sunnypilot.car.toyota.engage_cancel import EngageCancelGrace
 from opendbc.sunnypilot.car.toyota.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.toyota.mads import MadsCarController
 from opendbc.sunnypilot.car.toyota.rsa import RsaCarController
@@ -73,6 +74,8 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
     self.steer_gap_after_cut = self.CP.carFingerprint == CAR.LEXUS_IS and bool(self.CP_SP.flags & ToyotaFlagsSP.TSS2_EPS)
     self.steer_req_cut_sent = False
     self.distance_button = 0
+    # Lexus IS branch (engage_cancel_grace): see opendbc/sunnypilot/car/toyota/engage_cancel.py
+    self.engage_cancel_grace = EngageCancelGrace(bool(self.CP_SP.flags & ToyotaFlagsSP.ENGAGE_CANCEL_GRACE))
 
     # *** start long control state ***
     self.long_pid = get_long_tune(self.CP, self.params)
@@ -96,6 +99,8 @@ class CarController(CarControllerBase, GasInterceptorCarController, MadsCarContr
     stopping = actuators.longControlState == LongCtrlState.stopping
     hud_control = CC.hudControl
     pcm_cancel_cmd = CC.cruiseControl.cancel
+    # Lexus IS branch (engage_cancel_grace): no cancel for the one stale frame at the PCM's cruise rising edge
+    pcm_cancel_cmd = self.engage_cancel_grace.update(pcm_cancel_cmd, CS.out.cruiseState.enabled, CC.enabled)
     lat_active = CC.latActive and abs(CS.out.steeringTorque) < MAX_USER_TORQUE
 
     # sunnypilot: MADS-driven cluster LKA indicator, limited to the cars the LDA-button MADS toggle is scoped to

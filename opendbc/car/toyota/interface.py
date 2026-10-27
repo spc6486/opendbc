@@ -130,7 +130,8 @@ class CarInterface(CarInterfaceBase):
     if candidate in UNSUPPORTED_DSU_CAR:
       ret.safetyParam |= ToyotaSafetyFlagsSP.UNSUPPORTED_DSU
       # on by default; sunnypilot's per-feature settings can clear them (sunnypilot/car/interfaces.py, _initialize_toyota)
-      ret.flags |= ToyotaFlagsSP.RSA.value | ToyotaFlagsSP.LDA_MADS.value | ToyotaFlagsSP.GEAR_PACKET_1HZ.value
+      ret.flags |= ToyotaFlagsSP.RSA.value | ToyotaFlagsSP.LDA_MADS.value | ToyotaFlagsSP.GEAR_PACKET_1HZ.value | \
+                   ToyotaFlagsSP.ENGAGE_CANCEL_GRACE.value
 
     # Detect smartDSU, which intercepts ACC_CMD from the DSU (or radar) allowing openpilot to send it
     # 0x2AA is sent by a similar device which intercepts the radar instead of DSU on NO_DSU_CARs
